@@ -57,14 +57,94 @@ wss.on("connection", (ws, req) => {
     });
 
     ws.on("message", (message) => {
-        // Broadcast only to clients in the same room
-        const roomClients = rooms.get(roomId);
-        if (roomClients) {
-            roomClients.forEach((client) => {
-                if (client !== ws && client.readyState === WebSocket.OPEN) {
-                    client.send(message);
+        try {
+            const data = JSON.parse(message);
+
+            // Handle heartbeat messages
+            if (data.type === 'heartbeat') {
+                console.log('Heartbeat received:', data.data);
+                // Forward heartbeat to backend
+                notifyBackend({
+                    type: 'session-heartbeat',
+                    ...data.data
+                });
+                return; // Don't broadcast heartbeats to other clients
+            }
+
+            // Handle chat messages
+            if (data.type === 'chat') {
+                console.log('Chat message:', data);
+                // Forward chat to other room clients and optionally to backend
+                const roomClients = rooms.get(roomId);
+                if (roomClients) {
+                    roomClients.forEach((client) => {
+                        if (client !== ws && client.readyState === WebSocket.OPEN) {
+                            client.send(message);
+                        }
+                    });
                 }
-            });
+                return;
+            }
+
+            // Handle user status updates (mute/video on-off)
+            if (data.type === 'user-status') {
+                console.log('User status update:', data);
+                // Forward status to other room clients
+                const roomClients = rooms.get(roomId);
+                if (roomClients) {
+                    roomClients.forEach((client) => {
+                        if (client !== ws && client.readyState === WebSocket.OPEN) {
+                            client.send(message);
+                        }
+                    });
+                }
+                return;
+            }
+
+            // Handle call termination
+            if (data.type === 'call-ended') {
+                console.log('Call ended by user:', data);
+
+                // Notify backend of session end
+                notifyBackend({
+                    type: 'session-ended',
+                    sessionId: roomId,
+                    endedBy: userRole,
+                    userAddress: data.userAddress,
+                    timestamp: Date.now()
+                });
+
+                // Forward call-ended message to other room clients
+                const roomClients = rooms.get(roomId);
+                if (roomClients) {
+                    roomClients.forEach((client) => {
+                        if (client !== ws && client.readyState === WebSocket.OPEN) {
+                            client.send(message);
+                        }
+                    });
+                }
+                return;
+            }
+
+            // Broadcast WebRTC signaling messages to clients in the same room
+            const roomClients = rooms.get(roomId);
+            if (roomClients) {
+                roomClients.forEach((client) => {
+                    if (client !== ws && client.readyState === WebSocket.OPEN) {
+                        client.send(message);
+                    }
+                });
+            }
+        } catch (error) {
+            // If not JSON, just broadcast as before (for WebRTC signaling)
+            const roomClients = rooms.get(roomId);
+            if (roomClients) {
+                roomClients.forEach((client) => {
+                    if (client !== ws && client.readyState === WebSocket.OPEN) {
+                        client.send(message);
+                    }
+                });
+            }
         }
     });
 
